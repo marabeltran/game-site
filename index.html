@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swatch — guess the color</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&display=swap">
+<style>
+:root{--bg:#f3f1ff;--ink:#1b1740;--panel:#fff;--accent:#ffc83d;--good:#2fbf8f;--bad:#ff5c7a;--shadow:#1b1740;box-sizing:border-box}
+@media (prefers-color-scheme:dark){:root{--bg:#14123a;--ink:#f2f0ff;--panel:#211d55;--shadow:#05041a}}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,sans-serif;display:flex;justify-content:center;min-height:100vh}
+main{width:100%;max-width:520px;padding:28px 18px 48px}
+h1{font-size:clamp(3rem,14vw,5rem);line-height:.9;margin:0 0 6px;letter-spacing:-.04em;font-weight:800;
+  background:linear-gradient(90deg,#ff5c7a,#ffc83d,#6fe3c1,#7cc4ff,#8a7cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+h2{font-size:1.8rem;letter-spacing:-.03em;margin:30px 0 10px}
+.sub{margin:0 0 22px;font-size:1.05rem}
+.bar{display:flex;gap:10px;margin-bottom:16px}
+.stat{flex:1;background:var(--panel);border:3px solid var(--ink);border-radius:14px;padding:8px 12px;box-shadow:4px 4px 0 var(--shadow)}
+.stat b{display:block;font-size:1.6rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:.85rem;opacity:.75}
+.code{background:var(--panel);border:3px solid var(--ink);border-radius:14px;padding:14px;text-align:center;font-size:clamp(1.5rem,7vw,2.1rem);font-weight:800;box-shadow:4px 4px 0 var(--shadow);margin-bottom:16px;font-variant-numeric:tabular-nums}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+.swatch{aspect-ratio:1;border:3px solid var(--ink);border-radius:16px;box-shadow:4px 4px 0 var(--shadow);cursor:pointer;padding:0;transition:transform .08s,box-shadow .08s}
+.swatch:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--shadow)}
+.swatch:disabled{cursor:default}
+.swatch.right{outline:5px solid var(--good);outline-offset:2px}
+.swatch.wrong{outline:5px solid var(--bad);outline-offset:2px}
+.feedback{min-height:1.5em;margin:0 0 14px;font-weight:500}
+button{font:inherit;color:inherit}
+.btn{background:var(--accent);color:#1b1740;border:3px solid var(--ink);border-radius:14px;padding:12px 22px;font-weight:800;font-size:1.05rem;box-shadow:4px 4px 0 var(--shadow);cursor:pointer;transition:transform .08s,box-shadow .08s}
+.btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--shadow)}
+:focus-visible{outline:4px solid #7cc4ff;outline-offset:3px}
+form{display:grid;gap:8px;max-width:300px}
+input{font:inherit;padding:10px 12px;border:3px solid var(--ink);border-radius:12px;background:var(--panel);color:var(--ink)}
+.board{list-style:none;margin:0;padding:0;background:var(--panel);border:3px solid var(--ink);border-radius:16px;box-shadow:4px 4px 0 var(--shadow);overflow:hidden}
+.board li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:2px solid var(--bg)}
+.board li:last-child{border-bottom:0}
+.board li b{font-variant-numeric:tabular-nums}
+.board .empty{opacity:.7}
+.hide{display:none}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Swatch</h1>
+  <p class="sub">Read the RGB code, then tap the color that matches it.</p>
+
+  <section id="play">
+    <div class="bar">
+      <div class="stat"><b id="round">0/10</b><span>Round</span></div>
+      <div class="stat"><b id="score">0</b><span>Score</span></div>
+      <div class="stat"><b id="streak">0</b><span>Streak</span></div>
+    </div>
+    <div class="code" id="code">rgb(–, –, –)</div>
+    <div class="choices" id="choices" role="group" aria-label="Color choices"></div>
+    <p class="feedback" id="feedback" aria-live="polite"></p>
+    <button class="btn" id="start">Start game</button>
+  </section>
+
+  <section id="finish" class="hide">
+    <h2>Game over</h2>
+    <p id="final"></p>
+    <form id="form">
+      <label for="name">Your name</label>
+      <input id="name" maxlength="16" autocomplete="nickname" placeholder="Anonymous">
+      <button class="btn" type="submit">Save score</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Top 10</h2>
+    <ol class="board" id="board"><li class="empty">No scores yet. Be the first.</li></ol>
+  </section>
+</main>
+<script>
+// Front-end: game logic + calls to the back-end API.
+(function () {
+  // Back-end layer: scores are stored in this browser (localStorage).
+  var API = {
+    key: "swatch-scores",
+    get: function () {
+      try { return JSON.parse(localStorage.getItem(this.key)) || []; } catch (e) { return []; }
+    },
+    post: function (name, score) {
+      var clean = String(name || "").replace(/[<>&"']/g, "").trim().slice(0, 16) || "Anonymous";
+      var list = this.get();
+      list.push({ name: clean, score: Math.floor(score), date: new Date().toISOString() });
+      list.sort(function (a, b) { return b.score - a.score; });
+      list = list.slice(0, 10);
+      try { localStorage.setItem(this.key, JSON.stringify(list)); } catch (e) {}
+      return list;
+    }
+  };
+
+  var TOTAL = 10;
+  var $ = function (id) { return document.getElementById(id); };
+  var codeEl = $("code"), choicesEl = $("choices"), feedback = $("feedback");
+  var round = 0, score = 0, streak = 0, locked = true;
+
+  function rnd(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+  function clamp(n) { return Math.max(0, Math.min(255, n)); }
+  function rgb(c) { return "rgb(" + c[0] + ", " + c[1] + ", " + c[2] + ")"; }
+
+  function nextRound() {
+    round++;
+    $("round").textContent = round + "/" + TOTAL;
+    feedback.textContent = "";
+    var target = [rnd(0, 255), rnd(0, 255), rnd(0, 255)];
+    var spread = Math.max(25, 110 - round * 8); // later rounds: closer colors
+    var options = [target];
+    while (options.length < 6) {
+      var c = target.map(function (v) { return clamp(v + rnd(-spread, spread)); });
+      if (rgb(c) !== rgb(target) && !options.some(function (o) { return rgb(o) === rgb(c); })) options.push(c);
+    }
+    options.sort(function () { return Math.random() - 0.5; });
+    codeEl.textContent = rgb(target);
+    choicesEl.innerHTML = "";
+    options.forEach(function (c) {
+      var b = document.createElement("button");
+      b.className = "swatch";
+      b.style.background = rgb(c);
+      b.setAttribute("aria-label", "Color option");
+      b.addEventListener("click", function () { answer(b, rgb(c) === rgb(target)); });
+      choicesEl.appendChild(b);
+    });
+    locked = false;
+  }
+
+  function answer(btn, ok) {
+    if (locked) return;
+    locked = true;
+    if (ok) {
+      streak++;
+      var gained = 10 + Math.min(streak - 1, 5) * 2;
+      score += gained;
+      btn.classList.add("right");
+      feedback.textContent = "Correct! +" + gained;
+    } else {
+      streak = 0;
+      btn.classList.add("wrong");
+      feedback.textContent = "Not that one. Streak reset.";
+    }
+    $("score").textContent = score;
+    $("streak").textContent = streak;
+    setTimeout(function () { round >= TOTAL ? finish() : nextRound(); }, 900);
+  }
+
+  function finish() {
+    codeEl.textContent = "rgb(–, –, –)";
+    choicesEl.innerHTML = "";
+    $("start").textContent = "Play again";
+    $("start").classList.remove("hide");
+    $("finish").classList.remove("hide");
+    $("final").textContent = "You scored " + score + " points.";
+  }
+
+  function start() {
+    round = 0; score = 0; streak = 0;
+    $("score").textContent = "0"; $("streak").textContent = "0";
+    $("start").classList.add("hide");
+    $("finish").classList.add("hide");
+    nextRound();
+  }
+
+  function renderBoard(list) {
+    var ol = $("board");
+    ol.innerHTML = "";
+    if (!list.length) { ol.innerHTML = '<li class="empty">No scores yet. Be the first.</li>'; return; }
+    list.forEach(function (s, i) {
+      var li = document.createElement("li");
+      var n = document.createElement("span");
+      n.textContent = (i + 1) + ". " + s.name;
+      var b = document.createElement("b");
+      b.textContent = s.score;
+      li.appendChild(n); li.appendChild(b); ol.appendChild(li);
+    });
+  }
+
+  $("form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    renderBoard(API.post($("name").value, score));
+    $("finish").classList.add("hide");
+  });
+
+  $("start").addEventListener("click", start);
+  renderBoard(API.get());
+})();
+</script>
+</body>
+</html>
